@@ -16,6 +16,7 @@
             <b-icon icon="cursor-default-outline" size="is-medium"> </b-icon>
           </button>
         </b-tooltip>
+
         <b-tooltip label="Select" position="is-top">
           <button
             :class="{ 'is-primary': !config.draw_enable && selectIsActive }"
@@ -271,6 +272,19 @@ import { createRegularPolygon, createBox } from "ol/interaction/Draw";
 import * as turf from "@turf/turf";
 import { v4 as uuidv4 } from "uuid";
 
+//imports for Ian's code
+import {
+  LineString,
+  Point,
+  LinearRing,
+  MultiPoint,
+  MultiLineString,
+  MultiPolygon,
+} from "ol/geom.js";
+import Feature from "ol/Feature";
+import * as jsts from "jsts/dist/jsts.min.js";
+
+
 function getRandomColor() {
   var letters = "0123456789ABCDEF";
   var color = "#";
@@ -366,6 +380,47 @@ function polygonCut(polygon, line, properties) {
   return retVal;
 }
 
+function bufferCreator() {
+  this.vector_source.getFeatures().forEach((feature) => {
+    if (feature.getGeometry().getType() === "LineString") {
+      const parser = new jsts.io.OL3Parser();
+      parser.inject(
+        Point,
+        LineString,
+        LinearRing,
+        Polygon,
+        MultiPoint,
+        MultiLineString,
+        MultiPolygon,
+      );
+      const lineString = parser.read(feature.getGeometry());
+      const buffer = lineString.buffer(
+        ((200000 * 10) / 40) *
+          Math.pow(4 / this.map.getView().getZoom(), 2),
+      );
+      const bufferedFeature = new Feature({
+        geometry: new Polygon(parser.write(buffer).getCoordinates()),
+      });
+      this.vector_source.getFeatures().forEach((f) => {
+        if (f.getGeometry().getType() === "LineString") {
+          this.vector_source.removeFeature(f);
+        }
+      });
+      
+      console.log(bufferedFeature)
+      this.vector_source.addFeature(bufferedFeature); 
+      this.vector_layer.setStyle(
+        new Style({
+          stroke: new Stroke({ color: "blue", width: 1 }),
+          fill: new Fill({ color: "rgba(255, 255, 255, 0.7)" }),
+        }),
+      );
+
+      //this.map.removeInteraction(draw);
+    }
+  });
+}
+
 export default {
   name: "vector-layer",
   type: "vector",
@@ -408,7 +463,8 @@ export default {
         PolygonCutter: "box-cutter-off",
         Circle: "vector-circle-variant",
         Star: "octagram-outline",
-        Point: "target"
+        Point: "target", 
+        Brush: "brush"
       },
       currentFeature: null,
       currentMetadata: null,
@@ -1098,10 +1154,12 @@ export default {
         } else if (draw_type === "PolygonCutter") {
           _draw_type = "LineString";
           // this.config.draw_freehand = false;
+        } else if (draw_type === "Brush") {
+          _draw_type = "LineString";        
         } else {
           _draw_type = draw_type;
         }
-        const draw = new Draw({
+        let draw = new Draw({
           source: this.vector_source,
           type: _draw_type,
           freehand: this.config.draw_freehand,
@@ -1117,6 +1175,16 @@ export default {
           })
         });
         this.draw = draw;
+        if (draw_type == "Brush") {
+          draw = new Draw({
+            source: this.vector_source,
+            type: "LineString",
+            freehand: true,
+            style: new Style({
+              stroke: new Stroke({ color: "rgba(0,0,255,0.4)", width: 10 }),
+            }),
+          });
+        }
         this.select.setActive(false);
         this.map.addInteraction(draw);
         draw.on("drawend", async evt => {
@@ -1183,8 +1251,11 @@ export default {
               }
               this.vector_source.removeFeature(feature);
             }, 100);
-          }
-        });
+          } else if (draw_type == "Brush") {
+            bufferCreator();
+        } 
+        }
+        );
       });
     }
   }
